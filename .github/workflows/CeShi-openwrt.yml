@@ -19,7 +19,7 @@ on:
 #    branches:
 #      - master
 #    paths:
-#      - 'diy.config'
+#      - 'x86-64/开启编译'
 
 
 #release发布触发开始编译(只是一个触发条件,不会发布的,又麻烦,没卵用,不用研究)
@@ -36,32 +36,46 @@ on:
   watch:
 #    types: started
 
-
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: CeShi.config
-  DIY_P1_SH: CeShi.sh
-  DIY_P2_SH: CeShi2.sh
-  SSH_ACTIONS: false
-  UPLOAD_BIN_DIR: false
-  UPLOAD_CONFIG: true
-  UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: true
-  UPLOAD_WETRANSFER: true
+  REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+  SCKEY: ${{ secrets.SCKEY }}
   TZ: Asia/Shanghai
 
 jobs:
   build:
-    name: 编译OpenWrt-lede固件
     runs-on: ubuntu-18.04
     if: github.event.repository.owner.id == github.event.sender.id
 
-    steps:
-    - name: 准备结束
-      uses: actions/checkout@main
+    name: 编译 ${{matrix.target}} 固件
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86-64]
 
+    steps:
+    - name: WeChat notification
+      run: curl https://sc.ftqq.com/${{ secrets.SCKEY }}.send?text=${{matrix.target}}开始编译
+
+    - name: 准备结束
+      uses: actions/checkout@main   
+    
+    - name: 把开关转到根目录【${{matrix.target}}】｛Settings.ini｝
+      run: |
+        source "${GITHUB_WORKSPACE}/${{matrix.target}}/settings.ini"
+        echo "::set-env name=REPO_URL::${REPO_URL}"
+        echo "::set-env name=REPO_BRANCH::${REPO_BRANCH}"
+        echo "::set-env name=FEEDS_CONF::${FEEDS_CONF}"
+        echo "::set-env name=CONFIG_FILE::${CONFIG_FILE}"
+        echo "::set-env name=DIY_P1_SH::${DIY_P1_SH}"
+        echo "::set-env name=DIY_P2_SH::${DIY_P2_SH}"
+        echo "::set-env name=SSH_ACTIONS::${SSH_ACTIONS}"
+        echo "::set-env name=UPLOAD_BIN_DIR::${UPLOAD_BIN_DIR}"
+        echo "::set-env name=UPLOAD_CONFIG::${UPLOAD_CONFIG}"
+        echo "::set-env name=UPLOAD_FIRMWARE::${UPLOAD_FIRMWARE}"
+        echo "::set-env name=UPLOAD_COWTRANSFER::${UPLOAD_COWTRANSFER}"
+        echo "::set-env name=UPLOAD_WETRANSFER::${UPLOAD_WETRANSFER}"
+        echo "::set-env name=UPLOAD_RELEASE::${UPLOAD_RELEASE}"
+    
     - name: 开始安装编译所需系统
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -84,10 +98,10 @@ jobs:
 
     - name: 加载feeds跟自定义插件
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
+        [ -e ${{matrix.target}}/$FEEDS_CONF ] && mv ${{matrix.target}}/$FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x ${{matrix.target}}/$DIY_P1_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        $GITHUB_WORKSPACE/${{matrix.target}}/$DIY_P1_SH
 
     - name: 下载feeds跟安装自定义插件
       run: |
@@ -97,11 +111,11 @@ jobs:
 
     - name: 加载diy.config设置
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        [ -e ${{matrix.target}}/files ] && mv ${{matrix.target}}/files openwrt/files
+        [ -e ${{matrix.target}}/$CONFIG_FILE ] && mv ${{matrix.target}}/$CONFIG_FILE openwrt/.config
+        chmod +x ${{matrix.target}}/$DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        $GITHUB_WORKSPACE/${{matrix.target}}/$DIY_P2_SH
 
     - name: SSH远程连接服务器配置固件
       uses: P3TERX/debugger-action@main
@@ -169,16 +183,54 @@ jobs:
         name: CeShi_firmware_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: 上传固件到cowtransfer网盘
+    - name: Upload firmware to cowtransfer
       if: steps.organizer.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
       run: |
         curl -fsSL git.io/file-transfer | sh
         ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
         echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
-
-    - name: 上传固件到WeTransfer网盘
+        echo "::set-env name=COWTRANSFER_URL::$(cat cowtransfer.log | grep https | cut -f3 -d" ")"
+    
+    - name: Upload firmware to WeTransfer
       if: steps.organizer.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
         curl -fsSL git.io/file-transfer | sh
         ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
         echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
+        echo "::set-env name=WETRANSFER_URL::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+    
+    - name: Create release
+      id: create_release
+      uses: actions/create-release@main
+      continue-on-error: true
+      if: env.REPO_TOKEN && env.UPLOAD_RELEASE == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
+      with:
+        tag_name: ${{matrix.target}}
+        release_name: ${{matrix.target}}
+        body: |
+            墙内加速下载🔥:
+            
+            奶牛快传: ${{ env.COWTRANSFER_URL }}
+            
+            WeTransfer: ${{ env.WETRANSFER_URL }}
+            
+            快传保存7天
+            
+        draft: false
+        prerelease: false
+
+    - name: Upload firmware for release
+      uses: csexton/release-asset-action@master
+      continue-on-error: true
+      if: env.REPO_TOKEN && env.UPLOAD_RELEASE == 'true'
+      with:
+        pattern: "${{ env.FIRMWARE }}/*"
+        github-token: ${{ secrets.REPO_TOKEN }}
+        release-url: ${{ steps.create_release.outputs.upload_url }}
+
+    - name: WeChat notification
+      if: env.SCKEY
+      run: |
+        [ ${{ env.status }} == 'success' ] && curl https://sc.ftqq.com/${{ secrets.SCKEY }}.send?text=🎉OpenWrt_${{ env.RELEASE_TAG }}_${{matrix.target}}编译完成，发布成功😋|| curl https://sc.ftqq.com/${{ secrets.SCKEY }}.send?text=❌OpenWrt_${{ env.RELEASE_TAG }}_${{matrix.target}}编译失败😂
